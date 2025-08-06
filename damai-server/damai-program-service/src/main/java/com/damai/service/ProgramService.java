@@ -537,12 +537,14 @@ public class ProgramService extends ServiceImpl<ProgramMapper, Program> {
     }
     
     public ProgramVo simpleGetProgramAndShowMultipleCache(Long programId){
+        //查询节目演出时间
         ProgramShowTime programShowTime =
                 programShowTimeService.simpleSelectProgramShowTimeByProgramIdMultipleCache(programId);
         if (Objects.isNull(programShowTime)) {
             throw new DaMaiFrameException(BaseCode.PROGRAM_SHOW_TIME_NOT_EXIST);
         }
-        
+
+        //获取要购买的节目信息
         ProgramVo programVo = simpleGetByIdMultipleCache(programId);
         if (Objects.isNull(programVo)) {
             throw new DaMaiFrameException(BaseCode.PROGRAM_NOT_EXIST);

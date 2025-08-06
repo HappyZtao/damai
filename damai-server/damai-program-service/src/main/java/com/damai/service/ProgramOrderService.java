@@ -297,7 +297,7 @@ public class ProgramOrderService {
         OrderCreateDto orderCreateDto = buildCreateOrderParam(programOrderCreateDto, purchaseSeatList);
         
         String orderNumber = createOrderByRpc(orderCreateDto,purchaseSeatList);
-        
+        //延迟队列创建
         DelayOrderCancelDto delayOrderCancelDto = new DelayOrderCancelDto();
         delayOrderCancelDto.setOrderNumber(orderCreateDto.getOrderNumber());
         delayOrderCancelSend.sendMessage(JSON.toJSONString(delayOrderCancelDto));
@@ -318,8 +318,11 @@ public class ProgramOrderService {
     }
     
     private OrderCreateDto buildCreateOrderParam(ProgramOrderCreateDto programOrderCreateDto,List<SeatVo> purchaseSeatList){
+        //获取要购买的节目信息
         ProgramVo programVo = programService.simpleGetProgramAndShowMultipleCache(programOrderCreateDto.getProgramId());
+        //主订单参数构建
         OrderCreateDto orderCreateDto = new OrderCreateDto();
+        //生成订单编号
         orderCreateDto.setOrderNumber(uidGenerator.getOrderNumber(programOrderCreateDto.getUserId(),ORDER_TABLE_COUNT));
         orderCreateDto.setProgramId(programOrderCreateDto.getProgramId());
         orderCreateDto.setProgramItemPicture(programVo.getItemPicture());
@@ -332,7 +335,8 @@ public class ProgramOrderService {
                 purchaseSeatList.stream().map(SeatVo::getPrice).reduce(BigDecimal.ZERO, BigDecimal::add);
         orderCreateDto.setOrderPrice(databaseOrderPrice);
         orderCreateDto.setCreateOrderTime(DateUtils.now());
-        
+
+        //购票人订单构建
         List<Long> ticketUserIdList = programOrderCreateDto.getTicketUserIdList();
         List<OrderTicketUserCreateDto> orderTicketUserCreateDtoList = new ArrayList<>();
         for (int i = 0; i < ticketUserIdList.size(); i++) {
@@ -342,6 +346,7 @@ public class ProgramOrderService {
             orderTicketUserCreateDto.setProgramId(programOrderCreateDto.getProgramId());
             orderTicketUserCreateDto.setUserId(programOrderCreateDto.getUserId());
             orderTicketUserCreateDto.setTicketUserId(ticketUserId);
+            //给购票人绑定座位
             SeatVo seatVo =
                     Optional.ofNullable(purchaseSeatList.get(i))
                             .orElseThrow(() -> new DaMaiFrameException(BaseCode.SEAT_NOT_EXIST));
@@ -354,13 +359,14 @@ public class ProgramOrderService {
         }
         
         orderCreateDto.setOrderTicketUserCreateDtoList(orderTicketUserCreateDtoList);
-        
+
         return orderCreateDto;
     }
     
     private String createOrderByRpc(OrderCreateDto orderCreateDto,List<SeatVo> purchaseSeatList){
         ApiResponse<String> createOrderResponse = orderClient.create(orderCreateDto);
         if (!Objects.equals(createOrderResponse.getCode(), BaseCode.SUCCESS.getCode())) {
+            //订单创建失败将操作缓存中的数据还原
             log.error("创建订单失败 需人工处理 orderCreateDto : {}",JSON.toJSONString(orderCreateDto));
             updateProgramCacheDataResolution(orderCreateDto.getProgramId(),purchaseSeatList,OrderStatus.CANCEL);
             throw new DaMaiFrameException(createOrderResponse);

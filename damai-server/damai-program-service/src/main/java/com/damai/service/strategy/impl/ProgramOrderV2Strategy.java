@@ -49,53 +49,75 @@ public class ProgramOrderV2Strategy extends AbstractApplicationCommandLineRunner
     
     @Autowired
     private LocalLockCache localLockCache;
-    
-    
+
+    /**
+     * 订单优化版本v2
+     * 先用本地锁将没有获得锁的请求拦在外，获得本地锁后，再去获得分布式锁，这样可以减少对redis的压力
+     * 本地锁和分布式锁的键为 节目id+票档id，这样同一节目下不同票档的用户请求依旧可以并发执行
+     */
     @RepeatExecuteLimit(
             name = RepeatExecuteLimitConstants.CREATE_PROGRAM_ORDER,
             keys = {"#programOrderCreateDto.userId","#programOrderCreateDto.programId"})
-    @Override
     public String createOrder(ProgramOrderCreateDto programOrderCreateDto) {
+        //业务参数验证
         compositeContainer.execute(CompositeCheckType.PROGRAM_ORDER_CREATE_CHECK.getValue(),programOrderCreateDto);
         List<SeatDto> seatDtoList = programOrderCreateDto.getSeatDtoList();
         List<Long> ticketCategoryIdList = new ArrayList<>();
+        //手动选择座位时统计出票档id
         if (CollectionUtil.isNotEmpty(seatDtoList)) {
             ticketCategoryIdList =
                     seatDtoList.stream().map(SeatDto::getTicketCategoryId).distinct().collect(Collectors.toList());
         }else {
+            //自动匹配座位时传入的票档id
             ticketCategoryIdList.add(programOrderCreateDto.getTicketCategoryId());
         }
+        //本地锁集合
         List<ReentrantLock> localLockList = new ArrayList<>(ticketCategoryIdList.size());
+        //分布式锁集合
         List<RLock> serviceLockList = new ArrayList<>(ticketCategoryIdList.size());
+        //加锁成功的本地锁集合
         List<ReentrantLock> localLockSuccessList = new ArrayList<>(ticketCategoryIdList.size());
+        //加锁成功的分布式锁集合
         List<RLock> serviceLockSuccessList = new ArrayList<>(ticketCategoryIdList.size());
+        //根据统计出的票档id获得本地锁和分布式锁集合
         for (Long ticketCategoryId : ticketCategoryIdList) {
+            //锁的key为d_program_order_create_v2_lock-programId-ticketCategoryId
             String lockKey = StrUtil.join("-",PROGRAM_ORDER_CREATE_V2,
                     programOrderCreateDto.getProgramId(),ticketCategoryId);
+            //获得本地锁实例
             ReentrantLock localLock = localLockCache.getLock(lockKey,false);
+            //获得分布式锁实例
             RLock serviceLock = serviceLockTool.getLock(LockType.Reentrant, lockKey);
+            //添加到本地锁集合
             localLockList.add(localLock);
+            //添加到分布式锁集合
             serviceLockList.add(serviceLock);
         }
+        //循环本地锁进行加锁
         for (ReentrantLock reentrantLock : localLockList) {
             try {
                 reentrantLock.lock();
             }catch (Throwable t) {
+                //如果加锁出现异常，则终止
                 break;
             }
             localLockSuccessList.add(reentrantLock);
         }
+        //循环分布式锁进行加锁
         for (RLock rLock : serviceLockList) {
             try {
                 rLock.lock();
             }catch (Throwable t) {
+                //如果加锁出现异常，则终止
                 break;
             }
             serviceLockSuccessList.add(rLock);
         }
         try {
+            //进行订单创建
             return programOrderService.create(programOrderCreateDto);
         }finally {
+            //先循环解锁分布式锁
             for (int i = serviceLockSuccessList.size() - 1; i >= 0; i--) {
                 RLock rLock = serviceLockSuccessList.get(i);
                 try {
@@ -104,6 +126,7 @@ public class ProgramOrderV2Strategy extends AbstractApplicationCommandLineRunner
                     log.error("service lock unlock error",t);
                 }
             }
+            //再循环解锁本地锁
             for (int i = localLockSuccessList.size() - 1; i >= 0; i--) {
                 ReentrantLock reentrantLock = localLockSuccessList.get(i);
                 try {

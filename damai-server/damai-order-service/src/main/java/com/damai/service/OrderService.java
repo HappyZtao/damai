@@ -593,13 +593,15 @@ public class OrderService extends ServiceImpl<OrderMapper, Order> {
                 accountOrderCountDto.getProgramId()));
         return accountOrderCountVo;
     }
-    
-    
+
+
     @RepeatExecuteLimit(name = CREATE_PROGRAM_ORDER_MQ,keys = {"#orderCreateDto.orderNumber"})
     @Transactional(rollbackFor = Exception.class)
     public String createMq(OrderCreateDto orderCreateDto){
+        //将订单数据入库
         String orderNumber = create(orderCreateDto);
-        redisCache.set(RedisKeyBuild.createRedisKey(RedisKeyManage.ORDER_MQ,orderNumber),orderNumber,1, TimeUnit.MINUTES);
+        //将订单编号放入redis
+        redisCache.set(RedisKeyBuild.createRedisKey(RedisKeyManage.ORDER_MQ,orderNumber),orderNumber,5, TimeUnit.MINUTES);
         return orderNumber;
     }
     

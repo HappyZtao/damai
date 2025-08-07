@@ -29,27 +29,27 @@ import static com.damai.constant.Constant.SPRING_INJECT_PREFIX_DISTINCTION_NAME;
 @AllArgsConstructor
 @Component
 public class CreateOrderConsumer {
-    
+
     @Autowired
     private OrderService orderService;
-    
+
     public static Long MESSAGE_DELAY_TIME = 5000L;
-    
+
     @KafkaListener(topics = {SPRING_INJECT_PREFIX_DISTINCTION_NAME+"-"+"${spring.kafka.topic:create_order}"})
     public void consumerOrderMessage(ConsumerRecord<String,String> consumerRecord){
         try {
             Optional.ofNullable(consumerRecord.value()).map(String::valueOf).ifPresent(value -> {
-                
+
                 OrderCreateDto orderCreateDto = JSON.parseObject(value, OrderCreateDto.class);
-                
+
                 long createOrderTimeTimestamp = orderCreateDto.getCreateOrderTime().getTime();
-                
+
                 long currentTimeTimestamp = System.currentTimeMillis();
-                
+
                 long delayTime = currentTimeTimestamp - createOrderTimeTimestamp;
-                
+
                 log.info("消费到kafka的创建订单消息 消息体: {} 延迟时间 : {} 毫秒",value,delayTime);
-                
+                //如果消费到消息时，延迟时间超过了5s，那么此订单丢弃，将库存回滚回去
                 if (currentTimeTimestamp - createOrderTimeTimestamp > MESSAGE_DELAY_TIME) {
                     log.info("消费到kafka的创建订单消息延迟时间大于了 {} 毫秒 此订单消息被丢弃 订单号 : {}",
                             delayTime,orderCreateDto.getOrderNumber());
@@ -59,6 +59,7 @@ public class CreateOrderConsumer {
                     orderTicketUserSeatList.forEach((k,v) -> {
                         seatMap.put(k,v.stream().map(OrderTicketUserCreateDto::getSeatId).collect(Collectors.toList()));
                     });
+                    //数据恢复
                     orderService.updateProgramRelatedDataMq(orderCreateDto.getProgramId(),seatMap, OrderStatus.CANCEL);
                 }else {
                     String orderNumber = orderService.createMq(orderCreateDto);
